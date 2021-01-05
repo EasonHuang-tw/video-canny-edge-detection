@@ -1,9 +1,9 @@
 CC = gcc
-CFLAG = -O3 -I../common
-LFLAG = -lm
+CFLAG = -O3 -I../common -fopenmp
+LFLAG = -lm -fopenmp
 
-EXE = serial
-SRC = serial.c
+EXE = omp
+SRC = omp.c
 
 SRC += ../common/bmpfuncs.c
 

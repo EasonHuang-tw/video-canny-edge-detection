@@ -3,3 +3,4 @@
 serial
 cuda
 pthreads
+omp

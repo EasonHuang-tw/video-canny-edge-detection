@@ -15,7 +15,7 @@ ${EXE}: ${OBJ}
 	${CC} $^ ${CFLAG} -o $@ ${LFLAG}
 
 %.o: %.c
-	${CC} -c $^ -o $@
+	${CC} ${CFLAG} -c $^ -o $@
 
 .PHONY: clean
 

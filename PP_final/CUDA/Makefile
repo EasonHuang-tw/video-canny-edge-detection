@@ -18,7 +18,7 @@ ${EXE}: ${OBJ}
 	$(NVCC) ${CUDA_LINK_FLAGS} -o $@ $(OBJ)
 
 %.o: %.c
-	${CC} -c $^ -o $@
+	${CC} ${CFLAG} -c $^ -o $@
 
 kernel.o: kernel.cu kernel.h
 	${NVCC} ${CUDA_COMPILE_FLAGS} -c kernel.cu -o $@
