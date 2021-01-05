@@ -82,6 +82,47 @@ __global__ void convolution(float *in, float *out, float *kernel, int nx, int ny
     }
 }
 
+__global__ void threshold(float *nms, float *thre, int width, int t2){
+    int thisX = blockIdx.x * blockDim.x + threadIdx.x;
+    int thisY = blockIdx.y * blockDim.y + threadIdx.y;
+    int idx = thisY * width + thisX;
+
+    if (nms[idx] >= t2){
+	thre[idx] = MAX_BRIGHTNESS;
+    }
+    else{
+	thre[idx] = 0;
+    }
+}
+
+__global__ void hysteresis(float *nms, float *thre, float *hyster, int width, int height, int t1, int t2){
+    int thisX = blockIdx.x * blockDim.x + threadIdx.x;
+    int thisY = blockIdx.y * blockDim.y + threadIdx.y;
+    int idx = thisY * width + thisX;
+
+    const int nn = idx - width;
+    const int ss = idx + width;
+    const int ww = idx + 1;
+    const int ee = idx - 1;
+    const int nw = nn + 1;
+    const int ne = nn - 1;
+    const int sw = ss + 1;
+    const int se = ss - 1;
+
+    hyster[idx] = thre[idx];
+
+    if (thisX != 0 && thisX != width-1 && thisY != 0 && thisY != height-1){
+	if (t1 < nms[idx] && nms[idx] < t2){
+	    if (thre[ee] != 0 || thre[ww] != 0 ||
+		thre[nn] != 0 || thre[ss] != 0 ||
+		thre[ne] != 0 || thre[nw] != 0 ||
+		thre[se] != 0 || thre[sw] != 0){
+		hyster[idx] = MAX_BRIGHTNESS;
+	    }
+	}
+    }
+}
+
 /*
  * gaussianFilter: http://www.songho.ca/dsp/cannyedge/cannyedge.html
  * Determine the size of kernel (odd #)
@@ -124,14 +165,10 @@ float * canny_edge_detection(const float    *in,
 			     const int      t2,
 			     const float    sigma)
 {
-  int i, j, k, nedges;
-  int *edges;
-  size_t t = 1;
   float *retval;
   int dataSize = width * height * sizeof(float);
   const int n = 2 * (int) (2 * sigma) + 3;
   const float mean = (float) floor(n / 2.0);
-  size_t c = 0;
 
   dim3 threadsPerBlock(32, 32);
   dim3 numBlocks(width / threadsPerBlock.x, height / threadsPerBlock.y);
@@ -139,48 +176,38 @@ float * canny_edge_detection(const float    *in,
   const float Gx[] = {-1, 0, 1, -2, 0, 2, -1, 0, 1};
   const float Gy[] = {1, 2, 1, 0, 0, 0, -1, -2, -1};
 
-  /* host memory */
+  /* allocate host memory */
   float *G = (float*)calloc(dataSize, 1);
-
   float *after_Gx = (float*)calloc(dataSize, 1);
-
   float *after_Gy = (float*)calloc(dataSize, 1);
-
   float *nms = (float*)calloc(dataSize, 1);
-
   float *out = (float*)malloc(dataSize);
-
   float *pixels = (float*)malloc(dataSize);
-
   float *kernel = (float*)malloc(n * n * sizeof(float));
 
-  /* device memory */
+  /* allocate device memory */
   float *d_pixels;
   cudaMalloc(&d_pixels, dataSize);
-
   float *d_out;
   cudaMalloc(&d_out, dataSize);
-
   float *d_Gx;
   cudaMalloc(&d_Gx, dataSize);
-
   float *d_Gy;
   cudaMalloc(&d_Gy, dataSize);
-
   float *d_after_Gx;
   cudaMalloc(&d_after_Gx, dataSize);
-
   float *d_after_Gy;
   cudaMalloc(&d_after_Gy, dataSize);
-
   float *d_G;
   cudaMalloc(&d_G, dataSize);
-
   float *d_nms;
   cudaMalloc(&d_nms, dataSize);
-
   float *d_kernel;
   cudaMalloc(&d_kernel, n * n * sizeof(float));
+  float *d_thre;
+  cudaMalloc(&d_thre, dataSize);
+  float *d_hyster;
+  cudaMalloc(&d_hyster, dataSize);
 
   /* copy input data from host to device */
   cudaMemcpy(d_pixels, in, dataSize, cudaMemcpyHostToDevice);
@@ -202,54 +229,17 @@ float * canny_edge_detection(const float    *in,
   non_maximum_sup<<<numBlocks, threadsPerBlock>>>(d_nms, d_G, d_after_Gx, d_after_Gy, width, height);
   cudaMemcpy(nms, d_nms, dataSize, cudaMemcpyDeviceToHost);
 
-  /* Reuse the array used as a stack, width * height / 2 elements should be enough. */
-  edges = (int *) after_Gy;
-  memset(out, 0, dataSize);
-  memset(edges, 0, dataSize);
+  /* threshold */
+  threshold<<<numBlocks, threadsPerBlock>>>(d_nms, d_thre, width, t2);
 
-  /* Tracing edges with hysteresis. Non-recursive implementation. */
-  for (j = 1; j < height - 1; j++) {
-    for (i = 1; i < width - 1; i++) {
-      /* Trace edges. */
-      if (nms[t] >= t2 && out[t] == 0) {
-        out[t] = MAX_BRIGHTNESS;
-        nedges = 1;
-        edges[0] = t;
+  /* hystersis */
+  hysteresis<<<numBlocks, threadsPerBlock>>>(d_nms, d_thre, d_hyster, width, height, t1, t2);
 
-        do {
-          nedges--;
-          const int e = edges[nedges];
-
-          int nbs[8]; // neighbours
-          nbs[0] = e - width;     // nn
-          nbs[1] = e + width;     // ss
-          nbs[2] = e + 1;      // ww
-          nbs[3] = e - 1;      // ee
-          nbs[4] = nbs[0] + 1; // nw
-          nbs[5] = nbs[0] - 1; // ne
-          nbs[6] = nbs[1] + 1; // sw
-          nbs[7] = nbs[1] - 1; // se
-
-          for (k = 0; k < 8; k++) {
-            if (nms[nbs[k]] >= t1 && out[nbs[k]] == 0) {
-              out[nbs[k]] = MAX_BRIGHTNESS;
-              edges[nedges] = nbs[k];
-              nedges++;
-            }
-          }
-        } while (nedges > 0);
-      }
-      t++;
-    }
-  }
-
+  /* copy output data from device to host */
   retval = (float*)malloc(dataSize);
+  cudaMemcpy(retval, d_hyster, dataSize, cudaMemcpyDeviceToHost);
 
-  /* Convert back to float */
-  for (i = 0; i < width * height; i++) {
-    retval[i] = (float)out[i];
-  }
-
+  /* deallocate both CPU's and GPU's memory */
   cudaFree(d_pixels);
   cudaFree(d_out);
   cudaFree(d_Gx);
@@ -259,6 +249,8 @@ float * canny_edge_detection(const float    *in,
   cudaFree(d_G);
   cudaFree(d_nms);
   cudaFree(d_kernel);
+  cudaFree(d_thre);
+  cudaFree(d_hyster);
   free(after_Gx);
   free(after_Gy);
   free(G);
