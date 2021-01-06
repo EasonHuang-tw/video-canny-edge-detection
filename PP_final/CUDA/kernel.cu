@@ -177,12 +177,6 @@ float * canny_edge_detection(const float    *in,
   const float Gy[] = {1, 2, 1, 0, 0, 0, -1, -2, -1};
 
   /* allocate host memory */
-  float *G = (float*)calloc(dataSize, 1);
-  float *after_Gx = (float*)calloc(dataSize, 1);
-  float *after_Gy = (float*)calloc(dataSize, 1);
-  float *nms = (float*)calloc(dataSize, 1);
-  float *out = (float*)malloc(dataSize);
-  float *pixels = (float*)malloc(dataSize);
   float *kernel = (float*)malloc(n * n * sizeof(float));
 
   /* allocate device memory */
@@ -191,9 +185,9 @@ float * canny_edge_detection(const float    *in,
   float *d_out;
   cudaMalloc(&d_out, dataSize);
   float *d_Gx;
-  cudaMalloc(&d_Gx, dataSize);
+  cudaMalloc(&d_Gx, 9 * sizeof(float));
   float *d_Gy;
-  cudaMalloc(&d_Gy, dataSize);
+  cudaMalloc(&d_Gy, 9 * sizeof(float));
   float *d_after_Gx;
   cudaMalloc(&d_after_Gx, dataSize);
   float *d_after_Gy;
@@ -223,11 +217,9 @@ float * canny_edge_detection(const float    *in,
   convolution<<<numBlocks, threadsPerBlock>>>(d_out, d_after_Gx, d_Gx, width, height, 3, false);
   convolution<<<numBlocks, threadsPerBlock>>>(d_out, d_after_Gy, d_Gy, width, height, 3, false);
   calculate_G<<<numBlocks, threadsPerBlock>>>(d_G, d_after_Gx, d_after_Gy, width, height);
-  cudaMemcpy(G, d_G, dataSize, cudaMemcpyDeviceToHost);
 
   /* Non-maximum suppression */
   non_maximum_sup<<<numBlocks, threadsPerBlock>>>(d_nms, d_G, d_after_Gx, d_after_Gy, width, height);
-  cudaMemcpy(nms, d_nms, dataSize, cudaMemcpyDeviceToHost);
 
   /* threshold */
   threshold<<<numBlocks, threadsPerBlock>>>(d_nms, d_thre, width, t2);
@@ -251,12 +243,6 @@ float * canny_edge_detection(const float    *in,
   cudaFree(d_kernel);
   cudaFree(d_thre);
   cudaFree(d_hyster);
-  free(after_Gx);
-  free(after_Gy);
-  free(G);
-  free(nms);
-  free(pixels);
-  free(out);
   free(kernel);
 
   return retval;
