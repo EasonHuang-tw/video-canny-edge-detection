@@ -4,3 +4,4 @@ serial
 cuda
 pthreads
 omp
+opencl
